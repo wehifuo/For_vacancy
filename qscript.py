@@ -105,12 +105,25 @@ def _effects_script():
         pointerEvents: "none",
         zIndex: "2147483647",
         opacity: fade ? "0" : "1",
-        transition: fade ? "opacity 2s ease" : "none",
+        transition: fade ? "opacity 0.4s ease" : "none",
       });
       document.documentElement.appendChild(box);
+
       if (fade) {
         requestAnimationFrame(() => { box.style.opacity = "1"; });
       }
+      
+      // исчезание   
+      const visibleMs = (fade ? 400 : 0) + 2500;
+      setTimeout(() => {
+        if (!fade) {
+          box.remove();
+          return;
+        }
+        box.style.transition = "opacity 2s ease";
+        box.style.opacity = "0";
+        setTimeout(() => box.remove(), 2000);
+      }, visibleMs);
     };
   };
 

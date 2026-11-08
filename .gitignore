@@ -2,3 +2,7 @@ venv/
 .venv/
 __pycache__/
 *.pyc
+/uploads
+videos.db
+videos.db-wal
+videos.db-shm

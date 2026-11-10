@@ -16,7 +16,7 @@ def UploadVideo(server_url: str, video_path: str, company_name: str) -> str:
 
     with path.open("rb") as file_obj:
         response = requests.post(
-            f"{server_url.rstrip("/")}/upload",
+            f"{server_url.rstrip('/')}/upload",
             files={"file": (path.name, file_obj)},
             data={"company_name": company_name},
             timeout=60,
@@ -35,7 +35,7 @@ def GetVideoURL(server_url: str, company_name: str) -> str:
     requests = _requests()
 
     response = requests.get(
-        f"{server_url.rstrip("/")}/get_video_url",
+        f"{server_url.rstrip('/')}/get_video_url",
         params={"company_name": company_name},
         timeout=10,
     )

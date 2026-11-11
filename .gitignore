@@ -6,3 +6,4 @@ __pycache__/
 videos.db
 videos.db-wal
 videos.db-shm
+.env

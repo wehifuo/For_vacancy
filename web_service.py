@@ -1,25 +1,33 @@
 import os
 import re
-import sqlite3
 from pathlib import Path
-
 from flask import Flask, g, jsonify, request, send_from_directory, url_for
+import time
+import psycopg2
+from psycopg2.extras import RealDictCursor
+
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
-DB_PATH = BASE_DIR / "videos.db"
+
 
 app = Flask(__name__)
 
 
+def _db_config():
+    return {
+        "host": os.environ["DB_HOST"],
+        "port": int(os.environ.get("DB_PORT", "5432")),
+        "dbname": os.environ["DB_NAME"],
+        "user": os.environ["DB_USER"],
+        "password": os.environ["DB_PASSWORD"],
+        "connect_timeout": 5,
+    }
+
+
 def get_db():
     if "db" not in g:
-        connection = sqlite3.connect(DB_PATH, timeout=10)
-        connection.row_factory = sqlite3.Row
-        # WAL включается один раз в init_db(): это свойство файла БД.
-        # busy_timeout действует в рамках соединения, поэтому задаём здесь.
-        connection.execute("PRAGMA busy_timeout = 5000")
-        g.db = connection
+        g.db = psycopg2.connect(**_db_config())
     return g.db
 
 
@@ -30,27 +38,35 @@ def close_db(exception=None):
         db.close()
 
 
-def init_db():
+def init_db(max_attempts=30, delay=1):
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    last_error = None
 
-    conn = sqlite3.connect(DB_PATH)
-    try:
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS videos (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                company_name TEXT    NOT NULL UNIQUE,
-                file_path    TEXT    NOT NULL,
-                video_url    TEXT    NOT NULL,
-                created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
-                updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
-            )
-            """
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    for _ in range(max_attempts):
+        try:
+            conn = psycopg2.connect(**_db_config())
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        CREATE TABLE IF NOT EXISTS videos (
+                            id           SERIAL PRIMARY KEY,
+                            company_name TEXT NOT NULL UNIQUE,
+                            file_path    TEXT NOT NULL,
+                            video_url    TEXT NOT NULL,
+                            created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                            updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                        );
+                    """)
+                conn.commit()
+            finally:
+                conn.close()
+            return
+
+        except psycopg2.OperationalError as error:
+            last_error = error
+            time.sleep(delay)
+
+    raise RuntimeError("Не удалось подключиться к Postgre") from last_error
 
 
 def safe_filename(company_name, original_filename=""):
@@ -94,19 +110,19 @@ def upload_video():
     video_url = make_video_url(filename)
 
     db = get_db()
-    db.execute(
-        """
-        INSERT INTO videos (company_name, file_path, video_url)
-        VALUES (?, ?, ?)
-        ON CONFLICT(company_name) DO UPDATE SET
-            file_path  = excluded.file_path,
-            video_url  = excluded.video_url,
-            updated_at = datetime('now')
-        """,
-        (company_name, str(file_path), video_url),
-    )
+    with db.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO videos (company_name, file_path, video_url)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (company_name) DO UPDATE SET
+                file_path  = EXCLUDED.file_path,
+                video_url  = EXCLUDED.video_url,
+                updated_at = NOW()
+            """,
+            (company_name, str(file_path), video_url),
+        )
     db.commit()
-
     return jsonify({"company_name": company_name, "video_url": video_url}), 200
 
 
@@ -116,10 +132,12 @@ def get_video_url():
     if not company_name:
         return jsonify({"error": "параметр 'company_name' обязателен"}), 400
 
-    row = get_db().execute(
-        "SELECT company_name, video_url FROM videos WHERE company_name = ?",
-        (company_name,),
-    ).fetchone()
+    with get_db().cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            "SELECT company_name, video_url FROM videos WHERE company_name = %s",
+            (company_name,),
+        )
+        row = cur.fetchone()
 
     if row is None:
         return jsonify({"error": "видео не найдено", "company_name": company_name}), 404
@@ -134,15 +152,17 @@ def serve_media(filename):
     return send_from_directory(str(UPLOAD_DIR), filename, conditional=True)
 
 
-@app.get("/videos") 
+@app.get("/videos")
 def list_videos():
-    rows = get_db().execute(
-        """
-        SELECT id, company_name, file_path, video_url, created_at, updated_at
-        FROM videos
-        ORDER BY id
-        """
-    ).fetchall()
+
+    with get_db().cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute("""
+                    SELECT id, company_name, file_path, video_url, created_at::text AS created_at, updated_at::text AS updated_at
+                    FROM videos
+                    ORDER BY id;
+                    """)
+        rows = cur.fetchall()
+
     return jsonify([dict(row) for row in rows])
 
 

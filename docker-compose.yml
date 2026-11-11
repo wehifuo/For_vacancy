@@ -1,0 +1,35 @@
+services:
+  web:
+    build: .
+    image: video-web:dev
+    ports:
+      - "8000:80"
+    volumes:
+      - uploads:/app/uploads
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-videos}
+      DB_USER: ${POSTGRES_USER:-video_user}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-video_pass}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-videos}
+      POSTGRES_USER: ${POSTGRES_USER:-video_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-video_pass}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  db_data:
+  uploads:

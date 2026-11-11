@@ -1,43 +1,26 @@
-## Установка
+# Video Web Service — Internship Task 1
 
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-python -m playwright install chromium
-```
+Flask + Apache (mod_wsgi) + PostgreSQL, запуск через Docker Compose.
 
 ## Запуск
 
-Терминал 1 — сервер:
+Нужны Docker и Docker Compose.
 
 ```bash
-python web_service.py
+cp .env.example .env
+docker compose up --build
 ```
 
-Терминал 2 — запись, загрузка и превью:
+Сервис: http://127.0.0.1:8000
+
+Остановка (данные сохраняются в томах db_data и uploads):
 
 ```bash
-python capture_video.py --server http://127.0.0.1:8000 --view-seconds 5
+docker compose down
 ```
 
-Без сервера:
+Полная очистка вместе с данными:
 
 ```bash
-python capture_video.py
+docker compose down -v
 ```
-
-`--view-seconds 0` — держать превью открытым до нажатия Enter.
-
-## Результат
-
-* `video/` — записанные видео
-* `uploads/` — загруженные копии
-* `videos.db` — база данных
-
-## API
-
-* `POST /upload`
-* `GET /get_video_url?company_name=...`
-* `GET /media/<filename>`
-* `GET /videos`

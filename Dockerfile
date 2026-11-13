@@ -8,6 +8,7 @@ RUN apt-get update \
         apache2 \
         apache2-dev \
         build-essential \
+        ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -18,7 +19,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN mod_wsgi-express module-config > /etc/apache2/conf-available/wsgi.conf \
     && a2enconf wsgi
 
-COPY web_service.py web_service.wsgi /app/
+COPY web_service.py web_service.wsgi db.py apply_zoom.py worker.py /app/
 
 COPY apache-vhost.conf /etc/apache2/sites-available/000-default.conf
 

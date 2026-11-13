@@ -30,6 +30,25 @@ services:
       timeout: 5s
       retries: 10
 
+  worker:
+    build: .
+    image: video-web:dev
+    command: ["python", "worker.py"]
+    user: "www-data"
+    volumes:
+      - uploads:/app/uploads
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-videos}
+      DB_USER: ${POSTGRES_USER:-video_user}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-video_pass}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://127.0.0.1:8000}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   db_data:
   uploads:

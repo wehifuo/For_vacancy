@@ -1,6 +1,7 @@
 import sys
 sys.path.insert(0, "/app")
 
-from web_service import app as application, init_db
+from db import init_db
+from web_service import app as application
 
 init_db()

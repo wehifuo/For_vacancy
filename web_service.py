@@ -1,8 +1,10 @@
 import json
 import os
 import re
+import csv
+import io
 from pathlib import Path
-from flask import Flask, g, jsonify, request, send_from_directory, url_for
+from flask import Flask, g, jsonify, request, send_from_directory, url_for, render_template_string
 from psycopg2.extras import RealDictCursor
 from db import UPLOAD_DIR, connect, init_db
 
@@ -208,6 +210,157 @@ def process_video(video_id):
     db.commit()
     return jsonify({"id": video_id, "processing_status": "pending"}), 202
 
+@app.get("/upload_companies")
+def upload_companies_form():
+    return render_template_string("""
+        <!doctype html>
+        <html>
+        <body>
+            <form method="post"
+                  action="/upload_companies"
+                  enctype="multipart/form-data">
+                <input type="file" name="file" accept=".csv" required>
+                <button type="submit">Upload</button>
+            </form>
+            <p><a href="/companies">Open /companies</a></p>
+        </body>
+        </html>
+    """)
+
+@app.post("/upload_companies")
+def upload_companies():
+    uploaded = request.files.get("file")
+
+    if not uploaded or not uploaded.filename:
+        return jsonify({"error": "CSV файл обязателен"}), 400
+
+    try:
+        content = uploaded.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return jsonify({"error": "CSV должен быть в UTF-8"}), 400
+
+    reader = csv.DictReader(
+        io.StringIO(content),
+        delimiter=";",
+        quotechar='"',
+    )
+    headers = reader.fieldnames or []
+
+    if "Company Name" not in headers or "Web" not in headers:
+        return jsonify({
+            "error": "нужны колонки Company Name и Web"
+        }), 400
+
+    imported = 0
+    updated = 0
+    total_rows = 0
+
+    db = get_db()
+
+    with db.cursor() as cur:
+        for row in reader:
+            total_rows += 1
+            company_name = (row.get("Company Name") or "").strip()
+
+            if not company_name:
+                continue
+
+            def value(key):
+                return (row.get(key) or "").strip() or None
+
+            cur.execute(
+                """
+                INSERT INTO companies (
+                    company_name, language, country, postcode, city,
+                    street, house_no, web
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (company_name) DO UPDATE SET
+                    language = EXCLUDED.language,
+                    country = EXCLUDED.country,
+                    postcode = EXCLUDED.postcode,
+                    city = EXCLUDED.city,
+                    street = EXCLUDED.street,
+                    house_no = EXCLUDED.house_no,
+                    web = EXCLUDED.web,
+                    updated_at = NOW()
+                RETURNING (xmax = 0) AS inserted
+                """,
+                (
+                    company_name,
+                    value("Language"),
+                    value("Country"),
+                    value("Postcode"),
+                    value("City"),
+                    value("Street"),
+                    value("HouseNo"),
+                    value("Web"),
+                ),
+            )
+
+            if cur.fetchone()[0]:
+                imported += 1
+            else:
+                updated += 1
+
+    db.commit()
+
+    return jsonify({
+        "imported": imported,
+        "updated": updated,
+        "total_rows": total_rows,
+    })
+
+COMPANY_COLUMNS = """
+    id, company_name, language, country, postcode, city,
+    street, house_no, web, status, impressum_url, legal_name,
+    postal_address, handelsregister, vat_number, phone, email,
+    responsible_person, raw_json,
+    created_at::text AS created_at,
+    updated_at::text AS updated_at
+"""
+
+
+@app.get("/companies")
+def list_companies():
+    status_arg = request.args.get("status")
+    params = []
+    where = ""
+
+    if status_arg is not None:
+        try:
+            status = int(status_arg)
+        except ValueError:
+            return jsonify({"error": "status должен быть числом"}), 400
+
+        where = " WHERE status = %s"
+        params.append(status)
+
+    with get_db().cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            f"SELECT {COMPANY_COLUMNS} FROM companies{where} ORDER BY id",
+            params,
+        )
+        rows = cur.fetchall()
+
+    return jsonify([dict(row) for row in rows])
+
+@app.get("/companies/<path:company_name>")
+def get_company(company_name):
+    with get_db().cursor(cursor_factory=RealDictCursor) as cur:
+        cur.execute(
+            f"SELECT {COMPANY_COLUMNS} FROM companies WHERE company_name = %s",
+            (company_name,),
+        )
+        row = cur.fetchone()
+
+    if row is None:
+        return jsonify({
+            "error": "компания не найдена",
+            "company_name": company_name,
+        }), 404
+
+    return jsonify(dict(row))
 
 def main():
     init_db()

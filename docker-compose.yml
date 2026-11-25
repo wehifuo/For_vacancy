@@ -12,6 +12,9 @@ services:
       DB_NAME: ${POSTGRES_DB:-videos}
       DB_USER: ${POSTGRES_USER:-video_user}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-video_pass}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      REQUEST_DELAY_SEC: ${REQUEST_DELAY_SEC:-1}
     depends_on:
       db:
         condition: service_healthy

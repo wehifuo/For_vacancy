@@ -1,4 +1,6 @@
-# Video Web Service — Internship Task 2
+# Video Web Service
+
+Flask + Apache/mod_wsgi + PostgreSQL + worker + DeepSeek.
 
 ## Запуск
 
@@ -7,83 +9,74 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Сервис: <http://127.0.0.1:8000>
-
-Сервисы: `web`, `worker`, `db`. Тома: `db_data`, `uploads`.
+Сервис: <http://127.0.0.1:8000>  
+Сервисы: `web`, `worker`, `db`.
 
 ```bash
-docker compose down      # остановить, данные сохраняются
+docker compose down      # остановить
 docker compose down -v   # остановить и удалить данные
 ```
 
-## Что происходит
-
-1. `capture_video.py` записывает видео в `video/`.
-2. При зуме создаётся `video/<name>.webm.zoom.json`.
-3. С `--server` видео и sidecar загружаются в `/upload`.
-4. С `--process` вызывается `POST /videos/<id>/process`.
-5. `worker` запускает `apply_zoom.py` и ffmpeg.
-6. Результат: `uploads/<name>.zoomed.webm`, URL сохраняется в PostgreSQL.
-7. С `--wait-processed` открывается уже обработанное видео.
-
-## `capture_video.py`
+## Видео
 
 ```bash
-python capture_video.py [аргументы]
+python capture_video.py --server http://127.0.0.1:8000 \
+  --process --wait-processed 60
 ```
 
-| Аргумент | Что делает |
-|---|---|
-| `--server URL` | загрузить видео и sidecar на сервер |
-| `--view-seconds N` | сколько секунд держать превью (по умолчанию 5; `0` — ждать Enter) |
-| `--headed` | видимый браузер, нужен для ручного F5 |
-| `--no-zoom-demo` | отключить автоматический демо-зум |
-| `--process` | после загрузки вызвать `POST /videos/<id>/process` |
-| `--wait-processed N` | ждать обработки до N секунд и открыть результат |
+## Компании
 
-Примеры:
+Импорт CSV:
 
 ```bash
-python capture_video.py
-# только запись
-
-python capture_video.py --server http://127.0.0.1:8000
-# запись + загрузка + превью оригинала
-
-python capture_video.py --server http://127.0.0.1:8000 --process --wait-processed 60
-# полный цикл: запись → загрузка → обработка → превью
-
-python capture_video.py --headed --no-zoom-demo
-# ручной зум: первое нажатие F5 — in, второе — out
+curl -X POST http://127.0.0.1:8000/upload_companies \
+  -F "file=@companies.csv"
 ```
 
-## `apply_zoom.py`
+Форма: <http://127.0.0.1:8000/upload_companies>
 
 ```bash
-python apply_zoom.py --video video/Company.webm [аргументы]
+curl http://127.0.0.1:8000/companies
+curl "http://127.0.0.1:8000/companies/nutrimmun%20GmbH"
+curl "http://127.0.0.1:8000/companies?status=0"
 ```
 
-| Аргумент | Что делает |
-|---|---|
-| `--video PATH` | исходное видео (обязательно) |
-| `--dry-run` | показать команду ffmpeg без кодирования |
-| `--ffmpeg PATH` | путь к ffmpeg, если его нет в `PATH` |
-
-Результат: `video/Company.zoomed.webm`.
-
-Если sidecar нет или в нём нет событий, видео копируется без изменений.
+Обогащение:
 
 ```bash
-python apply_zoom.py --video video/Company.webm
-python apply_zoom.py --video video/Company.webm --dry-run
+docker compose exec web python enrich_companies.py
+docker compose exec web python enrich_companies.py --company "nutrimmun GmbH"
+docker compose exec web python enrich_companies.py --limit 1
+docker compose exec web python enrich_companies.py --status 4
+docker compose exec web python enrich_companies.py --delay 2
 ```
 
-## API
+Статусы:
 
-| Метод | Путь | Что делает |
-|---|---|---|
-| POST | `/upload` | загрузить видео и sidecar |
-| GET | `/get_video_url?company_name=...` | вернуть URL и статус |
-| GET | `/media/<filename>` | отдать видео |
-| GET | `/videos` | список записей |
-| POST | `/videos/<id>/process` | поставить видео в очередь |
+```text
+NULL  не обработана
+0     OK
+1     нет Impressum
+2     PARSING_FAILED
+3     адрес неполный
+4     ERROR
+5     нет website
+```
+
+## Token optimization
+
+Перед отправкой текста Impressum в DeepSeek `impressum.py` применяет бюджет `MAX_TEXT_CHARS = 8000`:
+
+- текст короче лимита отправляется как есть;
+- из длинных страниц удаляются boilerplate-строки (cookie, «Datenschutz», «AGB», «©», меню, языковые переключатели);
+- head-якоря (`Impressum`, `Angaben gemäß § 5 TMG/DDG`, `Anbieter`, `Diensteanbieter`) отсекают навигацию до юридического блока;
+- tail-якоря (`+49`/`0049`, VAT `DE...`, e-mail, `HRB`/`HRA`, `Amtsgericht`/`Registergericht`, `Geschäftsführer`/`Verantwortlich`) задают конец значимой части, после последнего совпадения остаётся запас `TAIL_MARGIN = 400` символов;
+- если текст всё ещё длиннее лимита, остаётся окно «начало + конец»; если якоря не найдены — отправляется исходный текст.
+
+Служебный символ `®` из текста удаляется. До и после оптимизации в лог пишутся `chars` и оценка токенов (`len(text) // 4`).
+
+## Тесты
+
+```bash
+./venv/bin/python -m pytest -q
+```

@@ -1,12 +1,23 @@
 import os
 import time
 from contextlib import closing
+from enum import IntEnum
 from pathlib import Path
 
 import psycopg2
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
+SCHEMA_FILE = BASE_DIR / "schema.sql"
+
+
+class CompanyStatus(IntEnum):
+    OK = 0
+    NO_IMPRESSUM_LINK_FOUND = 1
+    PARSING_FAILED = 2
+    ADDRESS_INCOMPLETE = 3
+    ERROR = 4
+    NO_WEBSITE = 5
 
 
 def db_config():
@@ -48,16 +59,20 @@ MIGRATIONS = [
 
 def init_db(max_attempts=30, delay=1):
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    schema_sql = SCHEMA_FILE.read_text(encoding="utf-8")
     last_error = None
 
     for _ in range(max_attempts):
         try:
             with closing(connect()) as conn:
                 with conn.cursor() as cur:
+                    cur.execute("SELECT pg_advisory_xact_lock(hashtext('schema_init'))")
                     cur.execute(CREATE_VIDEOS)
 
                     for statement in MIGRATIONS:
                         cur.execute(statement)
+
+                    cur.execute(schema_sql)
 
                 conn.commit()
             return
